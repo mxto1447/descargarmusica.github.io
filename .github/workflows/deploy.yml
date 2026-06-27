@@ -23,6 +23,8 @@ jobs:
           node-version: 20
 
       - name: Install and Build 🔧
+        env:
+          VITE_API_URL: https://descargarmusica-github-io.onrender.com
         run: |
           cd frontend
           npm install
