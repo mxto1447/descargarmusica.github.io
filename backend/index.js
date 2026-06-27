@@ -104,10 +104,15 @@ app.post('/api/download', async (req, res) => {
       output: path.join(TMP_DIR, `${safeTaskId}_%(title)s.%(ext)s`),
       newline: true,
       noWarnings: true,
-      ffmpegLocation: ffmpeg,
       extractorArgs: 'youtube:player_client=android',
-      restrictFilenames: true // To ensure safe URLs
+      restrictFilenames: true, // To ensure safe URLs
+      forceIpv4: true // Often helps bypass datacenter IP blocks
     };
+
+    // Use local ffmpeg-static ONLY if not running on Render (Render has system ffmpeg)
+    if (!process.env.RENDER) {
+      options.ffmpegLocation = ffmpeg;
+    }
 
     if (format === 'mp3') {
       options.extractAudio = true;
@@ -151,7 +156,8 @@ app.post('/api/download', async (req, res) => {
       }
 
     } catch (err) {
-      console.error(`[${task.taskId}] process failed:`, err.message);
+      const detailedError = err.stderr ? err.stderr.toString() : err.message;
+      console.error(`[${task.taskId}] process failed:\n${detailedError}`);
       io.emit('progress', { taskId: task.taskId, percent: 0, status: 'error', error: 'Download failed' });
     }
   };
