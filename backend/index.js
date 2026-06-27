@@ -104,7 +104,7 @@ app.post('/api/download', async (req, res) => {
       output: path.join(TMP_DIR, `${safeTaskId}_%(title)s.%(ext)s`),
       newline: true,
       noWarnings: true,
-      extractorArgs: 'youtube:player_client=android',
+      extractorArgs: 'youtube:player_client=ios,android,web',
       restrictFilenames: true, // To ensure safe URLs
       forceIpv4: true // Often helps bypass datacenter IP blocks
     };
