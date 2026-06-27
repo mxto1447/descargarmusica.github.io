@@ -8,22 +8,34 @@ const socket = io(API_URL);
 
 function App() {
   const [urls, setUrls] = useState('');
-  const [downloadPath, setDownloadPath] = useState('');
   const [format, setFormat] = useState('mp4');
   const [tasks, setTasks] = useState({});
   const [isDownloading, setIsDownloading] = useState(false);
 
   useEffect(() => {
     socket.on('progress', (data) => {
-      setTasks((prev) => ({
-        ...prev,
-        [data.taskId]: {
-          ...prev[data.taskId],
-          percent: data.percent,
-          status: data.status,
-          error: data.error
+      setTasks((prev) => {
+        const task = prev[data.taskId];
+        if (task && task.status !== 'completed' && data.status === 'completed' && data.downloadUrl) {
+          const a = document.createElement('a');
+          a.href = `${API_URL}${data.downloadUrl}`;
+          a.download = '';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
         }
-      }));
+
+        return {
+          ...prev,
+          [data.taskId]: {
+            ...prev[data.taskId],
+            percent: data.percent,
+            status: data.status,
+            error: data.error,
+            downloadUrl: data.downloadUrl
+          }
+        };
+      });
     });
 
     return () => {
@@ -44,14 +56,10 @@ function App() {
       const response = await fetch(`${API_URL}/api/download`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urls: list, format, downloadPath }),
+        body: JSON.stringify({ urls: list, format }),
       });
 
       const data = await response.json();
-      
-      if (data.downloadPath && !downloadPath) {
-        setDownloadPath(data.downloadPath);
-      }
 
       if (data.tasks) {
         const initialTasks = {};
@@ -89,16 +97,6 @@ function App() {
       </div>
 
       <div className="panel controls-panel">
-        <div className="input-group">
-          <label><Folder size={18} /> Destination Path</label>
-          <input 
-            type="text" 
-            className="input-cyber path-input"
-            value={downloadPath}
-            onChange={(e) => setDownloadPath(e.target.value)}
-            placeholder="E.g. C:\Users\YourName\Music"
-          />
-        </div>
 
         <div className="input-group">
           <label><Link2 size={18} /> Media Links & Playlists</label>

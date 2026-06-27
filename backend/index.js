@@ -20,11 +20,30 @@ const io = new Server(server, {
   }
 });
 
+const TMP_DIR = path.join(__dirname, 'tmp');
 const ensureDir = (dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 };
+ensureDir(TMP_DIR);
+
+// Cleanup job: delete files older than 1 hour to prevent disk space issues on cloud
+setInterval(() => {
+  fs.readdir(TMP_DIR, (err, files) => {
+    if (err) return;
+    const now = Date.now();
+    files.forEach(file => {
+      const filePath = path.join(TMP_DIR, file);
+      fs.stat(filePath, (err, stats) => {
+        if (err) return;
+        if (now - stats.mtimeMs > 3600000) { // 1 hour
+          fs.unlink(filePath, () => {});
+        }
+      });
+    });
+  });
+}, 3600000);
 
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
@@ -34,17 +53,10 @@ io.on('connection', (socket) => {
 });
 
 app.post('/api/download', async (req, res) => {
-  const { urls, format, downloadPath } = req.body;
+  const { urls, format } = req.body;
   
   if (!urls || !Array.isArray(urls)) {
     return res.status(400).json({ error: 'Please provide an array of URLs' });
-  }
-
-  const finalPath = downloadPath || path.join(os.homedir(), 'Desktop', 'Descargas_YT');
-  try {
-    ensureDir(finalPath);
-  } catch (err) {
-    return res.status(500).json({ error: 'Could not create download directory' });
   }
 
   const expandedTasks = [];
@@ -75,7 +87,7 @@ app.post('/api/download', async (req, res) => {
     }
   }
 
-  res.json({ message: 'Downloads started', tasks: expandedTasks, downloadPath: finalPath });
+  res.json({ message: 'Downloads started', tasks: expandedTasks });
 
   // Concurrency Limiter
   const MAX_CONCURRENT = 5;
@@ -85,12 +97,16 @@ app.post('/api/download', async (req, res) => {
   const startDownload = async (task) => {
     io.emit('progress', { taskId: task.taskId, percent: 0, status: 'starting' });
     
+    // Clean taskId to ensure it's a valid filename prefix
+    const safeTaskId = task.taskId.replace(/[^a-z0-9]/gi, '');
+    
     const options = {
-      output: path.join(finalPath, '%(title)s.%(ext)s'),
+      output: path.join(TMP_DIR, `${safeTaskId}_%(title)s.%(ext)s`),
       newline: true,
       noWarnings: true,
       ffmpegLocation: ffmpeg,
-      extractorArgs: 'youtube:player_client=android'
+      extractorArgs: 'youtube:player_client=android',
+      restrictFilenames: true // To ensure safe URLs
     };
 
     if (format === 'mp3') {
@@ -118,7 +134,22 @@ app.post('/api/download', async (req, res) => {
 
       await downloadProcess;
       console.log(`[${task.taskId}] process completed`);
-      io.emit('progress', { taskId: task.taskId, percent: 100, status: 'completed' });
+      
+      // Find the generated file
+      const files = fs.readdirSync(TMP_DIR);
+      const downloadedFile = files.find(f => f.startsWith(`${safeTaskId}_`));
+      
+      if (downloadedFile) {
+        io.emit('progress', { 
+          taskId: task.taskId, 
+          percent: 100, 
+          status: 'completed',
+          downloadUrl: `/api/file/${encodeURIComponent(downloadedFile)}`
+        });
+      } else {
+        throw new Error('File not found after download');
+      }
+
     } catch (err) {
       console.error(`[${task.taskId}] process failed:`, err.message);
       io.emit('progress', { taskId: task.taskId, percent: 0, status: 'error', error: 'Download failed' });
@@ -140,7 +171,29 @@ app.post('/api/download', async (req, res) => {
   processNext();
 });
 
-const PORT = 4000;
+// Endpoint to serve the downloaded file
+app.get('/api/file/:filename', (req, res) => {
+  const filename = req.params.filename;
+  if (filename.includes('/') || filename.includes('..')) {
+    return res.status(400).send('Invalid filename');
+  }
+  
+  const filePath = path.join(TMP_DIR, filename);
+  
+  if (fs.existsSync(filePath)) {
+    // We send the file. We could delete it immediately after sending, 
+    // but the user might cancel and retry. The 1-hour cron will clean it.
+    res.download(filePath, (err) => {
+      if (err) {
+        console.error('Error sending file:', err);
+      }
+    });
+  } else {
+    res.status(404).send('File not found or expired');
+  }
+});
+
+const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
-  console.log(`Backend server running on http://localhost:${PORT}`);
+  console.log(`Backend server running on port ${PORT}`);
 });
